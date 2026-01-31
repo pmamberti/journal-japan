@@ -48,6 +48,25 @@ npm run dev
 
 The app will be available at `http://localhost:5173`
 
+### Running With Docker (No Traefik)
+
+For quick local testing with Docker:
+
+```bash
+# Start the application
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop the application
+docker compose down
+```
+
+The app will be available at `http://localhost:8080`
+
+**Note:** The default docker-compose.yml has Traefik labels commented out for easy local testing. When deploying to your home lab with Traefik, uncomment the labels in docker-compose.yml and add the containers to the traefik network.
+
 ## Production Deployment (Home Lab with Traefik)
 
 ### Prerequisites
@@ -71,17 +90,22 @@ cp .env.example .env
 DOMAIN=japan.yourdomain.com
 ```
 
-3. Make sure your Traefik network exists:
+3. Uncomment the Traefik labels in `docker-compose.yml`:
+   - Uncomment all the `labels:` sections for both backend and frontend
+   - Uncomment the `traefik:` network under `networks:`
+   - Add `- traefik` to the networks list for both services
+
+4. Make sure your Traefik network exists:
 ```bash
 docker network create traefik
 ```
 
-4. Build and start the containers:
+5. Build and start the containers:
 ```bash
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
-5. Check logs to ensure everything started correctly:
+6. Check logs to ensure everything started correctly:
 ```bash
 docker-compose logs -f
 ```
