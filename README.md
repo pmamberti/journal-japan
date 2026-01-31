@@ -63,7 +63,7 @@ docker compose logs -f
 docker compose down
 ```
 
-The app will be available at `http://localhost:8080`
+The app will be available at `http://localhost:8010`
 
 **Note:** The default docker-compose.yml has Traefik labels commented out for easy local testing. When deploying to your home lab with Traefik, uncomment the labels in docker-compose.yml and add the containers to the traefik network.
 
