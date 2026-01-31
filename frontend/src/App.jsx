@@ -51,6 +51,11 @@ function App() {
     setError(null)
     setSuccess(null)
 
+    if (!date || date === '') {
+      setError('Please select a date')
+      return
+    }
+
     if (photos.length < 1 || photos.length > 5) {
       setError('Please select 1-5 photos')
       return
@@ -132,7 +137,6 @@ function App() {
               name="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              required
             />
           </div>
 
