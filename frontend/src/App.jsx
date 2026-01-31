@@ -56,12 +56,30 @@ function App() {
       return
     }
 
+    // Validate and normalize date format
+    let formattedDate = date
+    if (!date || date === '') {
+      setError('Please select a date')
+      return
+    }
+
+    // Ensure date is in YYYY-MM-DD format
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      try {
+        const dateObj = new Date(date)
+        formattedDate = dateObj.toISOString().split('T')[0]
+      } catch (err) {
+        setError('Invalid date format')
+        return
+      }
+    }
+
     setSubmitting(true)
 
     try {
       const formData = new FormData()
-      formData.append('date', date)
-      formData.append('text', text)
+      formData.append('date', formattedDate)
+      formData.append('text', text || '')
       photos.forEach((photo) => {
         formData.append('photos', photo)
       })
@@ -81,8 +99,12 @@ function App() {
       setPhotos([])
       setDate(new Date().toISOString().split('T')[0])
       fetchEntries()
+
+      // Scroll to top to see success message
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
       setError(err.message)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     } finally {
       setSubmitting(false)
     }
@@ -123,15 +145,16 @@ function App() {
         {error && <div className="error-message">{error}</div>}
         {success && <div className="success-message">{success}</div>}
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <div className="form-group">
             <label htmlFor="date">Date</label>
             <input
               type="date"
               id="date"
+              name="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              required
+              max={new Date().toISOString().split('T')[0]}
             />
           </div>
 
