@@ -130,13 +130,14 @@ function App() {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="date">Date</label>
+            <label htmlFor="date">Date (YYYY-MM-DD)</label>
             <input
-              type="date"
+              type="text"
               id="date"
               name="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
+              placeholder="2026-01-31"
             />
           </div>
 
