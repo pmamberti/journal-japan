@@ -1,7 +1,7 @@
 {
-  "name": "Japan Journal",
-  "short_name": "Japan Journal",
-  "description": "Daily photo journal for my Japan trip",
+  "name": "Gaia Travels 2026",
+  "short_name": "Gaia Travels",
+  "description": "G explores Japan",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

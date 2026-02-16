@@ -386,8 +386,8 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>Japan Journal</h1>
-        <p>Daily memories from my journey</p>
+        <h1>Gaia Travels 2026</h1>
+        <p>G explores Japan</p>
         {!isLoggedIn && (
           <button className="login-link" onClick={() => setShowLogin(true)}>
             •••
