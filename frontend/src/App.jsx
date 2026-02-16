@@ -148,18 +148,19 @@ function App() {
     for (const file of files) {
       let dateStr = today
       try {
-        const exif = await exifr.parse(file, { gps: true, pick: ['DateTimeOriginal'] })
-        if (exif) {
-          if (exif.DateTimeOriginal) {
-            const photoDate = new Date(exif.DateTimeOriginal)
-            dateStr = photoDate.toISOString().split('T')[0]
+        const [gps, exif] = await Promise.all([
+          exifr.gps(file).catch(() => null),
+          exifr.parse(file, ['DateTimeOriginal']).catch(() => null)
+        ])
+        if (exif?.DateTimeOriginal) {
+          const photoDate = new Date(exif.DateTimeOriginal)
+          dateStr = photoDate.toISOString().split('T')[0]
+        }
+        if (gps?.latitude && gps?.longitude) {
+          if (!locations[dateStr]) {
+            locations[dateStr] = { latitude: gps.latitude, longitude: gps.longitude }
           }
-          if (exif.latitude && exif.longitude) {
-            if (!locations[dateStr]) {
-              locations[dateStr] = { latitude: exif.latitude, longitude: exif.longitude }
-            }
-            photoLocations[file.name] = { latitude: exif.latitude, longitude: exif.longitude }
-          }
+          photoLocations[file.name] = { latitude: gps.latitude, longitude: gps.longitude }
         }
       } catch {
         // No EXIF data
