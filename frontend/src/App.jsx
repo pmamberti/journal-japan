@@ -18,18 +18,16 @@ function App() {
   const [showLogin, setShowLogin] = useState(false)
   const [loginPassword, setLoginPassword] = useState('')
 
-  // Form state - photos grouped by date
-  const [photosByDate, setPhotosByDate] = useState({})
+  // Form state - flat list of selected photos
+  const [selectedPhotos, setSelectedPhotos] = useState([]) // [{file, date, location, locationName}]
   const [text, setText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [compressing, setCompressing] = useState(false)
-  const [locationByDate, setLocationByDate] = useState({})
 
   // Edit state
   const [editingEntry, setEditingEntry] = useState(null)
   const [editText, setEditText] = useState('')
-  const [editNewPhotos, setEditNewPhotos] = useState([])
-  const [photosToRemove, setPhotosToRemove] = useState([])
+  const [editNewPhoto, setEditNewPhoto] = useState(null)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -98,9 +96,6 @@ function App() {
     }
   }
 
-  // Per-photo location names resolved from EXIF GPS
-  const [photoLocationNames, setPhotoLocationNames] = useState({})
-
   const reverseGeocode = async (lat, lng) => {
     try {
       const response = await fetch(
@@ -111,7 +106,6 @@ function App() {
         const data = await response.json()
         const addr = data.address || {}
         const parts = []
-        // Most specific first
         if (addr.amenity || addr.building || addr.aeroway || addr.tourism) {
           parts.push(addr.amenity || addr.building || addr.aeroway || addr.tourism)
         }
@@ -122,7 +116,6 @@ function App() {
         if (addr.city || addr.town || addr.village) {
           parts.push(addr.city || addr.town || addr.village)
         }
-        // Take up to 3 most specific parts for a good balance
         const name = parts.slice(0, 3).join(', ')
         return name || data.display_name?.split(',').slice(0, 3).join(',').trim() || null
       }
@@ -140,13 +133,14 @@ function App() {
     }
     setError(null)
 
-    const grouped = {}
-    const locations = {}
-    const photoLocations = {}
     const today = new Date().toISOString().split('T')[0]
+    const photos = []
 
     for (const file of files) {
       let dateStr = today
+      let locationName = null
+      let location = null
+
       try {
         const [gps, exif] = await Promise.all([
           exifr.gps(file).catch(() => null),
@@ -157,40 +151,35 @@ function App() {
           dateStr = photoDate.toISOString().split('T')[0]
         }
         if (gps?.latitude && gps?.longitude) {
-          if (!locations[dateStr]) {
-            locations[dateStr] = { latitude: gps.latitude, longitude: gps.longitude }
-          }
-          photoLocations[file.name] = { latitude: gps.latitude, longitude: gps.longitude }
+          location = { latitude: gps.latitude, longitude: gps.longitude }
         }
       } catch {
         // No EXIF data
       }
 
-      if (!grouped[dateStr]) grouped[dateStr] = []
-      grouped[dateStr].push(file)
+      photos.push({ file, date: dateStr, location, locationName })
     }
 
-    setPhotosByDate(grouped)
-    setLocationByDate(locations)
+    setSelectedPhotos(photos)
 
-    // Reverse geocode each photo's location
-    const names = {}
-    for (const [filename, coords] of Object.entries(photoLocations)) {
-      const name = await reverseGeocode(coords.latitude, coords.longitude)
-      if (name) names[filename] = name
-      // Rate limit: 1s between Nominatim requests
-      await new Promise(r => setTimeout(r, 1000))
+    // Reverse geocode each photo with GPS
+    for (let i = 0; i < photos.length; i++) {
+      const p = photos[i]
+      if (p.location) {
+        const name = await reverseGeocode(p.location.latitude, p.location.longitude)
+        if (name) {
+          setSelectedPhotos(prev => prev.map((item, idx) =>
+            idx === i ? { ...item, locationName: name } : item
+          ))
+        }
+        // Rate limit: 1s between Nominatim requests
+        await new Promise(r => setTimeout(r, 1000))
+      }
     }
-    setPhotoLocationNames(names)
   }
 
-  const handleRemovePhoto = (date, index) => {
-    setPhotosByDate(prev => {
-      const updated = { ...prev }
-      updated[date] = updated[date].filter((_, i) => i !== index)
-      if (updated[date].length === 0) delete updated[date]
-      return updated
-    })
+  const handleRemovePhoto = (index) => {
+    setSelectedPhotos(prev => prev.filter((_, i) => i !== index))
   }
 
   const handleSubmit = async (e) => {
@@ -198,17 +187,9 @@ function App() {
     setError(null)
     setSuccess(null)
 
-    const dates = Object.keys(photosByDate)
-    if (dates.length === 0) {
+    if (selectedPhotos.length === 0) {
       setError('Please select photos')
       return
-    }
-
-    for (const date of dates) {
-      if (photosByDate[date].length > 5) {
-        setError(`Maximum 5 photos per day (${date} has ${photosByDate[date].length})`)
-        return
-      }
     }
 
     setSubmitting(true)
@@ -222,17 +203,22 @@ function App() {
         preserveExif: true,
       }
 
-      let successCount = 0
-      for (const date of dates) {
-        const photos = photosByDate[date]
+      // Group photos by date for the API call
+      const byDate = {}
+      for (const photo of selectedPhotos) {
+        if (!byDate[photo.date]) byDate[photo.date] = []
+        byDate[photo.date].push(photo)
+      }
 
+      let successCount = 0
+      for (const [date, photos] of Object.entries(byDate)) {
         const compressedPhotos = await Promise.all(
-          photos.map(async (photo) => {
+          photos.map(async (p) => {
             try {
-              const compressed = await imageCompression(photo, compressionOptions)
-              return new File([compressed], photo.name, { type: compressed.type })
+              const compressed = await imageCompression(p.file, compressionOptions)
+              return { ...p, compressedFile: new File([compressed], p.file.name, { type: compressed.type }) }
             } catch {
-              return photo
+              return { ...p, compressedFile: p.file }
             }
           })
         )
@@ -242,22 +228,20 @@ function App() {
         const formData = new FormData()
         formData.append('date', date)
         formData.append('text', text)
-        if (locationByDate[date]) {
-          formData.append('latitude', locationByDate[date].latitude)
-          formData.append('longitude', locationByDate[date].longitude)
-        }
-        // Send per-photo location names
-        const locationsForEntry = {}
-        for (const photo of photos) {
-          if (photoLocationNames[photo.name]) {
-            locationsForEntry[photo.name] = photoLocationNames[photo.name]
+
+        // Build per-photo location names map
+        const locationsMap = {}
+        for (const p of compressedPhotos) {
+          if (p.locationName) {
+            locationsMap[p.file.name] = p.locationName
           }
         }
-        if (Object.keys(locationsForEntry).length > 0) {
-          formData.append('photo_locations', JSON.stringify(locationsForEntry))
+        if (Object.keys(locationsMap).length > 0) {
+          formData.append('photo_locations', JSON.stringify(locationsMap))
         }
-        compressedPhotos.forEach((photo) => {
-          formData.append('photos', photo, photo.name)
+
+        compressedPhotos.forEach((p) => {
+          formData.append('photos', p.compressedFile, p.file.name)
         })
 
         const response = await fetch(`${API_URL}/entries`, {
@@ -270,14 +254,14 @@ function App() {
           if (response.status === 413) throw new Error('Photos too large')
           throw new Error('Failed to create entry')
         }
-        successCount++
+
+        const created = await response.json()
+        successCount += created.length
       }
 
       setSuccess(`Created ${successCount} ${successCount === 1 ? 'entry' : 'entries'}!`)
       setText('')
-      setPhotosByDate({})
-      setLocationByDate({})
-      setPhotoLocationNames({})
+      setSelectedPhotos([])
       fetchEntries()
     } catch (err) {
       setError(err.message)
@@ -306,29 +290,12 @@ function App() {
   const openEditModal = (entry) => {
     setEditingEntry(entry)
     setEditText(entry.text || '')
-    setEditNewPhotos([])
-    setPhotosToRemove([])
+    setEditNewPhoto(null)
   }
 
   const handleEditPhotoChange = async (e) => {
-    const files = Array.from(e.target.files)
-    const currentPhotos = editingEntry.photos.length - photosToRemove.length
-    const maxNew = 5 - currentPhotos
-
-    if (files.length > maxNew) {
-      setError(`Can only add ${maxNew} more photo(s)`)
-      return
-    }
-
-    setEditNewPhotos(files)
-  }
-
-  const togglePhotoRemoval = (photoId) => {
-    setPhotosToRemove(prev =>
-      prev.includes(photoId)
-        ? prev.filter(id => id !== photoId)
-        : [...prev, photoId]
-    )
+    const file = e.target.files[0]
+    if (file) setEditNewPhoto(file)
   }
 
   const handleSaveEdit = async () => {
@@ -339,26 +306,19 @@ function App() {
       const formData = new FormData()
       formData.append('text', editText)
 
-      if (photosToRemove.length > 0) {
-        formData.append('remove_photos', photosToRemove.join(','))
-      }
-
-      // Compress and add new photos
-      if (editNewPhotos.length > 0) {
+      // Compress and add replacement photo
+      if (editNewPhoto) {
         const compressionOptions = {
           maxSizeMB: 1,
           maxWidthOrHeight: 2048,
           useWebWorker: true,
           preserveExif: true,
         }
-
-        for (const photo of editNewPhotos) {
-          try {
-            const compressed = await imageCompression(photo, compressionOptions)
-            formData.append('photos', new File([compressed], photo.name, { type: compressed.type }))
-          } catch {
-            formData.append('photos', photo)
-          }
+        try {
+          const compressed = await imageCompression(editNewPhoto, compressionOptions)
+          formData.append('photo', new File([compressed], editNewPhoto.name, { type: compressed.type }))
+        } catch {
+          formData.append('photo', editNewPhoto)
         }
       }
 
@@ -393,35 +353,7 @@ function App() {
     return new Date(dateString).toLocaleDateString('en-US', options)
   }
 
-  // Cache for reverse geocoded location names
-  const [locationNames, setLocationNames] = useState({})
-
-  // Reverse geocode entry-level locations (fallback for entries without per-photo locations)
-  useEffect(() => {
-    const geocodeLocations = async () => {
-      for (const entry of entries) {
-        if (entry.latitude && entry.longitude) {
-          const key = `${entry.latitude},${entry.longitude}`
-          if (!locationNames[key]) {
-            const name = await reverseGeocode(entry.latitude, entry.longitude)
-            if (name) {
-              setLocationNames(prev => ({ ...prev, [key]: name }))
-            }
-            // Rate limit: wait 1s between requests (Nominatim policy)
-            await new Promise(r => setTimeout(r, 1000))
-          }
-        }
-      }
-    }
-    if (entries.length > 0) geocodeLocations()
-  }, [entries])
-
-  const getLocationName = (lat, lng) => {
-    if (!lat || !lng) return null
-    return locationNames[`${lat},${lng}`] || null
-  }
-
-  // Shuffle array using Fisher-Yates algorithm with seeded random for consistency per session
+  // Shuffle array using Fisher-Yates algorithm
   const shuffleArray = (array) => {
     const shuffled = [...array]
     for (let i = shuffled.length - 1; i > 0; i--) {
@@ -431,25 +363,10 @@ function App() {
     return shuffled
   }
 
+  // In the new model, each entry IS a photo — no flattening needed
   const allPhotos = useMemo(() => {
-    const photos = entries.flatMap(entry =>
-      entry.photos.map(photo => ({
-        ...photo,
-        date: entry.date,
-        entryId: entry.id,
-        text: entry.text,
-        latitude: entry.latitude,
-        longitude: entry.longitude
-      }))
-    )
-    return shuffleArray(photos)
+    return shuffleArray(entries.filter(e => e.filename))
   }, [entries])
-
-  // Get display location for a photo: prefer photo-level, fall back to entry-level geocoded
-  const getPhotoLocation = (photo) => {
-    if (photo.location_name) return photo.location_name
-    return getLocationName(photo.latitude, photo.longitude)
-  }
 
   // Calculate grid columns based on photo count
   const getGridCols = (count) => {
@@ -459,18 +376,12 @@ function App() {
 
   // Memoize object URLs to avoid recreating on every render (fixes slow typing)
   const previewUrls = useMemo(() => {
-    const urls = {}
-    for (const [date, photos] of Object.entries(photosByDate)) {
-      urls[date] = photos.map(f => URL.createObjectURL(f))
-    }
-    return urls
-  }, [photosByDate])
+    return selectedPhotos.map(p => URL.createObjectURL(p.file))
+  }, [selectedPhotos])
 
-  const editPreviewUrls = useMemo(() => {
-    return editNewPhotos.map(f => URL.createObjectURL(f))
-  }, [editNewPhotos])
-
-  const sortedDates = Object.keys(photosByDate).sort()
+  const editPreviewUrl = useMemo(() => {
+    return editNewPhoto ? URL.createObjectURL(editNewPhoto) : null
+  }, [editNewPhoto])
 
   return (
     <div className="app">
@@ -514,7 +425,7 @@ function App() {
 
                 <form onSubmit={handleSubmit} noValidate>
                   <div className="form-group">
-                    <label>Photos (up to 10, max 5 per day)</label>
+                    <label>Photos (up to 10, each becomes its own entry)</label>
                     <div className="photo-upload" onClick={() => document.getElementById('photo-input').click()}>
                       <input
                         type="file"
@@ -524,25 +435,18 @@ function App() {
                         onChange={handlePhotoChange}
                       />
                       <p>Click to select photos</p>
-                      <small>Grouped by date automatically</small>
+                      <small>Each photo becomes its own entry</small>
                     </div>
 
-                    {sortedDates.length > 0 && (
-                      <div className="photos-by-date">
-                        {sortedDates.map(date => (
-                          <div key={date} className="date-group">
-                            <div className="date-group-header">
-                              <span className="date-badge">{formatDateLong(date)}</span>
-                              <span className="photo-count">{photosByDate[date].length} photo{photosByDate[date].length !== 1 ? 's' : ''}</span>
-                              {locationByDate[date] && <span className="location-badge">📍</span>}
-                            </div>
-                            <div className="photo-previews">
-                              {photosByDate[date].map((photo, index) => (
-                                <div key={index} className="photo-preview">
-                                  <img src={previewUrls[date]?.[index]} alt="" />
-                                  <button type="button" onClick={(e) => { e.stopPropagation(); handleRemovePhoto(date, index) }}>×</button>
-                                </div>
-                              ))}
+                    {selectedPhotos.length > 0 && (
+                      <div className="photo-previews" style={{ marginTop: '12px' }}>
+                        {selectedPhotos.map((photo, index) => (
+                          <div key={index} className="photo-preview">
+                            <img src={previewUrls[index]} alt="" />
+                            <button type="button" onClick={(e) => { e.stopPropagation(); handleRemovePhoto(index) }}>×</button>
+                            <div className="photo-preview-info">
+                              <span className="date-badge">{formatDate(photo.date)}</span>
+                              {photo.locationName && <span className="location-badge" title={photo.locationName}>📍</span>}
                             </div>
                           </div>
                         ))}
@@ -551,7 +455,7 @@ function App() {
                   </div>
 
                   <div className="form-group">
-                    <label htmlFor="text">Story (optional)</label>
+                    <label htmlFor="text">Story (optional, shared across all entries)</label>
                     <textarea
                       id="text"
                       value={text}
@@ -561,8 +465,8 @@ function App() {
                     />
                   </div>
 
-                  <button type="submit" className="submit-button" disabled={submitting || sortedDates.length === 0}>
-                    {compressing ? 'Compressing...' : submitting ? 'Uploading...' : `Post ${sortedDates.length || ''} ${sortedDates.length === 1 ? 'Entry' : 'Entries'}`}
+                  <button type="submit" className="submit-button" disabled={submitting || selectedPhotos.length === 0}>
+                    {compressing ? 'Compressing...' : submitting ? 'Uploading...' : `Post ${selectedPhotos.length || ''} ${selectedPhotos.length === 1 ? 'Entry' : 'Entries'}`}
                   </button>
                 </form>
               </div>
@@ -578,33 +482,22 @@ function App() {
                   <div className="entries-grid">
                     {entries.map((entry) => (
                       <div key={entry.id} className="entry-card">
-                        <div className={`entry-photos ${entry.photos.length === 1 ? 'single' : ''}`}>
-                          {entry.photos.map((photo) => (
+                        {entry.filename && (
+                          <div className="entry-photos single">
                             <img
-                              key={photo.id}
-                              src={`${API_URL}/photos/${photo.filename}`}
+                              src={`${API_URL}/photos/${entry.filename}`}
                               alt=""
-                              onClick={() => setLightboxPhoto(photo)}
+                              onClick={() => setLightboxPhoto(entry)}
                             />
-                          ))}
-                        </div>
+                          </div>
+                        )}
                         <div className="entry-content">
                           <div className="entry-date">{formatDateLong(entry.date)}</div>
-                          {(() => {
-                            const photoLocs = entry.photos
-                              .map(p => p.location_name)
-                              .filter(Boolean)
-                            const uniqueLocs = [...new Set(photoLocs)]
-                            const entryLoc = entry.latitude && entry.longitude
-                              ? getLocationName(entry.latitude, entry.longitude)
-                              : null
-                            const locations = uniqueLocs.length > 0 ? uniqueLocs : (entryLoc ? [entryLoc] : [])
-                            return locations.map((loc, i) => (
-                              <span key={i} className="entry-location">
-                                📍 {loc}
-                              </span>
-                            ))
-                          })()}
+                          {entry.location_name && (
+                            <span className="entry-location">
+                              📍 {entry.location_name}
+                            </span>
+                          )}
                           {entry.text && <p className="entry-text">{entry.text}</p>}
                           <div className="entry-actions">
                             <button className="edit-entry-button" onClick={() => openEditModal(entry)}>Edit</button>
@@ -623,19 +516,19 @@ function App() {
               className="gallery-mosaic"
               style={{ gridTemplateColumns: `repeat(${getGridCols(allPhotos.length)}, 1fr)` }}
             >
-              {allPhotos.map((photo) => (
-                <div key={photo.id} className="gallery-mosaic-item">
+              {allPhotos.map((entry) => (
+                <div key={entry.id} className="gallery-mosaic-item">
                   <img
-                    src={`${API_URL}/photos/${photo.filename}`}
+                    src={`${API_URL}/photos/${entry.filename}`}
                     alt=""
-                    onClick={() => setLightboxPhoto(photo)}
+                    onClick={() => setLightboxPhoto(entry)}
                   />
                   <div className="gallery-item-overlay">
-                    <div className="gallery-item-date">{formatDate(photo.date)}</div>
-                    {getPhotoLocation(photo) && (
-                      <div className="gallery-item-location">📍 {getPhotoLocation(photo)}</div>
+                    <div className="gallery-item-date">{formatDate(entry.date)}</div>
+                    {entry.location_name && (
+                      <div className="gallery-item-location">📍 {entry.location_name}</div>
                     )}
-                    {photo.text && <div className="gallery-item-text">{photo.text}</div>}
+                    {entry.text && <div className="gallery-item-text">{entry.text}</div>}
                   </div>
                 </div>
               ))}
@@ -654,19 +547,19 @@ function App() {
             <div className="loading" style={{gridColumn: '1 / -1', textAlign: 'center'}}>No photos yet</div>
           ) : (
             <>
-              {allPhotos.map((photo) => (
-                <div key={photo.id} className="gallery-mosaic-item">
+              {allPhotos.map((entry) => (
+                <div key={entry.id} className="gallery-mosaic-item">
                   <img
-                    src={`${API_URL}/photos/${photo.filename}`}
+                    src={`${API_URL}/photos/${entry.filename}`}
                     alt=""
-                    onClick={() => setLightboxPhoto(photo)}
+                    onClick={() => setLightboxPhoto(entry)}
                   />
                   <div className="gallery-item-overlay">
-                    <div className="gallery-item-date">{formatDate(photo.date)}</div>
-                    {getPhotoLocation(photo) && (
-                      <div className="gallery-item-location">📍 {getPhotoLocation(photo)}</div>
+                    <div className="gallery-item-date">{formatDate(entry.date)}</div>
+                    {entry.location_name && (
+                      <div className="gallery-item-location">📍 {entry.location_name}</div>
                     )}
-                    {photo.text && <div className="gallery-item-text">{photo.text}</div>}
+                    {entry.text && <div className="gallery-item-text">{entry.text}</div>}
                   </div>
                 </div>
               ))}
@@ -685,8 +578,8 @@ function App() {
           <img src={`${API_URL}/photos/${lightboxPhoto.filename}`} alt="" />
           <div className="lightbox-info">
             <div className="lightbox-date">{formatDateLong(lightboxPhoto.date)}</div>
-            {getPhotoLocation(lightboxPhoto) && (
-              <div className="lightbox-location">📍 {getPhotoLocation(lightboxPhoto)}</div>
+            {lightboxPhoto.location_name && (
+              <div className="lightbox-location">📍 {lightboxPhoto.location_name}</div>
             )}
             {lightboxPhoto.text && <div className="lightbox-text">{lightboxPhoto.text}</div>}
           </div>
@@ -719,38 +612,28 @@ function App() {
             <h3>Edit Entry - {formatDate(editingEntry.date)}</h3>
 
             <div className="edit-photos">
-              <label>Photos (click to remove)</label>
-              <div className="edit-photo-grid">
-                {editingEntry.photos.map((photo) => (
-                  <div
-                    key={photo.id}
-                    className={`edit-photo-item ${photosToRemove.includes(photo.id) ? 'removing' : ''}`}
-                    onClick={() => togglePhotoRemoval(photo.id)}
-                  >
-                    <img src={`${API_URL}/photos/${photo.filename}`} alt="" />
-                    {photosToRemove.includes(photo.id) && <div className="remove-overlay">Remove</div>}
+              <label>Current photo</label>
+              {editingEntry.filename && (
+                <div className="edit-photo-grid">
+                  <div className="edit-photo-item">
+                    <img src={`${API_URL}/photos/${editingEntry.filename}`} alt="" />
                   </div>
-                ))}
-              </div>
-
-              {editingEntry.photos.length - photosToRemove.length < 5 && (
-                <div className="add-photos-section">
-                  <label>Add more photos</label>
-                  <input
-                    type="file"
-                    accept="image/*,.heic,.heif"
-                    multiple
-                    onChange={handleEditPhotoChange}
-                  />
-                  {editNewPhotos.length > 0 && (
-                    <div className="new-photos-preview">
-                      {editNewPhotos.map((file, idx) => (
-                        <img key={idx} src={editPreviewUrls[idx]} alt="" />
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
+
+              <div className="add-photos-section" style={{ marginTop: '12px' }}>
+                <label>Replace photo</label>
+                <input
+                  type="file"
+                  accept="image/*,.heic,.heif"
+                  onChange={handleEditPhotoChange}
+                />
+                {editNewPhoto && editPreviewUrl && (
+                  <div className="new-photos-preview">
+                    <img src={editPreviewUrl} alt="" />
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="edit-text">

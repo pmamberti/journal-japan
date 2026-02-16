@@ -45,6 +45,24 @@ Path(DATABASE_URL).parent.mkdir(parents=True, exist_ok=True)
 # Database initialization
 async def init_db():
     async with aiosqlite.connect(DATABASE_URL) as db:
+        # Check if old photos table exists (need to migrate)
+        needs_migration = False
+        async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='photos'") as cursor:
+            if await cursor.fetchone():
+                needs_migration = True
+
+        # Add new columns to entries if they don't exist
+        for col, coltype in [("latitude", "REAL"), ("longitude", "REAL"), ("location_name", "TEXT"),
+                             ("filename", "TEXT"), ("original_name", "TEXT")]:
+            try:
+                await db.execute(f"ALTER TABLE entries ADD COLUMN {col} {coltype}")
+            except:
+                pass
+
+        if needs_migration:
+            await migrate_photos_to_entries(db)
+
+        # Create entries table for fresh installs (includes all columns)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS entries (
                 id TEXT PRIMARY KEY,
@@ -53,41 +71,44 @@ async def init_db():
                 created_at TEXT NOT NULL,
                 latitude REAL,
                 longitude REAL,
-                location_name TEXT
-            )
-        """)
-        # Add columns if they don't exist (for existing databases)
-        try:
-            await db.execute("ALTER TABLE entries ADD COLUMN latitude REAL")
-        except:
-            pass
-        try:
-            await db.execute("ALTER TABLE entries ADD COLUMN longitude REAL")
-        except:
-            pass
-        try:
-            await db.execute("ALTER TABLE entries ADD COLUMN location_name TEXT")
-        except:
-            pass
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS photos (
-                id TEXT PRIMARY KEY,
-                entry_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                original_name TEXT,
-                order_index INTEGER NOT NULL,
                 location_name TEXT,
-                FOREIGN KEY (entry_id) REFERENCES entries (id) ON DELETE CASCADE
+                filename TEXT,
+                original_name TEXT
             )
         """)
-        # Add location_name column if it doesn't exist (for existing databases)
-        try:
-            await db.execute("ALTER TABLE photos ADD COLUMN location_name TEXT")
-        except:
-            pass
         await db.execute("CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date)")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_photos_entry ON photos(entry_id)")
         await db.commit()
+
+
+async def migrate_photos_to_entries(db):
+    """Migrate from old two-table model (entries + photos) to one-entry-per-photo model."""
+    # Get all photos with their entry data
+    async with db.execute("""
+        SELECT p.id, p.filename, p.original_name, p.location_name,
+               e.date, e.text, e.created_at, e.latitude, e.longitude, e.location_name as entry_location
+        FROM photos p
+        JOIN entries e ON p.entry_id = e.id
+        ORDER BY e.date, p.order_index
+    """) as cursor:
+        rows = await cursor.fetchall()
+
+    if rows:
+        # Delete old entries (we'll recreate them from photos)
+        await db.execute("DELETE FROM entries")
+
+        for row in rows:
+            photo_id, filename, original_name, photo_loc, entry_date, text, created_at, lat, lng, entry_loc = row
+            # Prefer photo-level location, fall back to entry-level
+            location_name = photo_loc or entry_loc
+            await db.execute(
+                "INSERT INTO entries (id, date, text, created_at, latitude, longitude, location_name, filename, original_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (photo_id, entry_date, text, created_at, lat, lng, location_name, filename, original_name)
+            )
+
+    # Drop old photos table
+    await db.execute("DROP TABLE IF EXISTS photos")
+    await db.commit()
+
 
 @app.on_event("startup")
 async def startup():
@@ -110,35 +131,15 @@ async def verify_auth(authorization: Optional[str] = Header(None)):
 async def create_entry(
     date: str = Form(...),
     text: Optional[str] = Form(None),
-    latitude: Optional[float] = Form(None),
-    longitude: Optional[float] = Form(None),
-    location_name: Optional[str] = Form(None),
     photo_locations: Optional[str] = Form(None),  # JSON: {"original_filename": "Location Name", ...}
     photos: List[UploadFile] = File(...),
     authorization: Optional[str] = Header(None)
 ):
-    """Create a new journal entry with 1-5 photos"""
+    """Create journal entries - one per photo. Multi-select creates multiple entries."""
     verify_token(authorization)
 
-    if len(photos) < 1 or len(photos) > 5:
-        raise HTTPException(status_code=400, detail="Must upload 1-5 photos")
-
-    # Validate date format
-    try:
-        entry_date = datetime.strptime(date, "%Y-%m-%d").date()
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-
-    # Check if max entries for this date reached (limit 5 per day)
-    async with aiosqlite.connect(DATABASE_URL) as db:
-        async with db.execute("SELECT COUNT(*) FROM entries WHERE date = ?", (date,)) as cursor:
-            count = (await cursor.fetchone())[0]
-            if count >= 5:
-                raise HTTPException(status_code=400, detail="Maximum 5 entries per day reached")
-
-    # Create entry
-    entry_id = str(uuid.uuid4())
-    created_at = datetime.utcnow().isoformat()
+    if len(photos) < 1 or len(photos) > 10:
+        raise HTTPException(status_code=400, detail="Must upload 1-10 photos")
 
     # Parse per-photo locations
     locations_map = {}
@@ -148,67 +149,58 @@ async def create_entry(
         except:
             pass
 
-    # Save photos
-    saved_photos = []
-    for idx, photo in enumerate(photos):
-        # Validate file type
-        if not photo.content_type or not photo.content_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail=f"File {photo.filename} is not an image")
+    created_entries = []
 
-        # Generate unique filename
-        ext = Path(photo.filename).suffix
-        photo_id = str(uuid.uuid4())
-        filename = f"{photo_id}{ext}"
-        filepath = Path(UPLOAD_DIR) / filename
-
-        # Save file
-        with open(filepath, "wb") as buffer:
-            shutil.copyfileobj(photo.file, buffer)
-
-        saved_photos.append({
-            "id": photo_id,
-            "filename": filename,
-            "original_name": photo.filename,
-            "order_index": idx,
-            "location_name": locations_map.get(photo.filename)
-        })
-
-    # Save to database
     async with aiosqlite.connect(DATABASE_URL) as db:
-        await db.execute(
-            "INSERT INTO entries (id, date, text, created_at, latitude, longitude, location_name) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (entry_id, date, text, created_at, latitude, longitude, location_name)
-        )
+        for photo in photos:
+            # Validate file type
+            if not photo.content_type or not photo.content_type.startswith("image/"):
+                raise HTTPException(status_code=400, detail=f"File {photo.filename} is not an image")
 
-        for photo in saved_photos:
+            # Generate unique filename
+            ext = Path(photo.filename).suffix
+            entry_id = str(uuid.uuid4())
+            filename = f"{entry_id}{ext}"
+            filepath = Path(UPLOAD_DIR) / filename
+            created_at = datetime.utcnow().isoformat()
+
+            # Save file
+            with open(filepath, "wb") as buffer:
+                shutil.copyfileobj(photo.file, buffer)
+
+            location_name = locations_map.get(photo.filename)
+
             await db.execute(
-                "INSERT INTO photos (id, entry_id, filename, original_name, order_index, location_name) VALUES (?, ?, ?, ?, ?, ?)",
-                (photo["id"], entry_id, photo["filename"], photo["original_name"], photo["order_index"], photo["location_name"])
+                "INSERT INTO entries (id, date, text, created_at, filename, original_name, location_name) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (entry_id, date, text, created_at, filename, photo.filename, location_name)
             )
+
+            created_entries.append({
+                "id": entry_id,
+                "date": date,
+                "text": text,
+                "created_at": created_at,
+                "filename": filename,
+                "original_name": photo.filename,
+                "location_name": location_name,
+                "latitude": None,
+                "longitude": None,
+            })
 
         await db.commit()
 
-    return {
-        "id": entry_id,
-        "date": date,
-        "text": text,
-        "created_at": created_at,
-        "latitude": latitude,
-        "longitude": longitude,
-        "location_name": location_name,
-        "photos": saved_photos
-    }
+    return created_entries
 
 @app.get("/api/entries")
 async def get_entries():
     """Get all journal entries"""
     async with aiosqlite.connect(DATABASE_URL) as db:
         async with db.execute(
-            "SELECT id, date, text, created_at, latitude, longitude, location_name FROM entries ORDER BY date DESC"
+            "SELECT id, date, text, created_at, latitude, longitude, location_name, filename, original_name FROM entries ORDER BY date DESC, created_at DESC"
         ) as cursor:
             entries = []
             async for row in cursor:
-                entry = {
+                entries.append({
                     "id": row[0],
                     "date": row[1],
                     "text": row[2],
@@ -216,25 +208,9 @@ async def get_entries():
                     "latitude": row[4],
                     "longitude": row[5],
                     "location_name": row[6],
-                    "photos": []
-                }
-
-                # Get photos for this entry
-                async with db.execute(
-                    "SELECT id, filename, original_name, order_index, location_name FROM photos WHERE entry_id = ? ORDER BY order_index",
-                    (row[0],)
-                ) as photo_cursor:
-                    async for photo_row in photo_cursor:
-                        entry["photos"].append({
-                            "id": photo_row[0],
-                            "filename": photo_row[1],
-                            "original_name": photo_row[2],
-                            "order_index": photo_row[3],
-                            "location_name": photo_row[4]
-                        })
-
-                entries.append(entry)
-
+                    "filename": row[7],
+                    "original_name": row[8],
+                })
     return entries
 
 @app.get("/api/entries/{entry_id}")
@@ -242,14 +218,14 @@ async def get_entry(entry_id: str):
     """Get a single journal entry"""
     async with aiosqlite.connect(DATABASE_URL) as db:
         async with db.execute(
-            "SELECT id, date, text, created_at, latitude, longitude, location_name FROM entries WHERE id = ?",
+            "SELECT id, date, text, created_at, latitude, longitude, location_name, filename, original_name FROM entries WHERE id = ?",
             (entry_id,)
         ) as cursor:
             row = await cursor.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Entry not found")
 
-            entry = {
+            return {
                 "id": row[0],
                 "date": row[1],
                 "text": row[2],
@@ -257,90 +233,56 @@ async def get_entry(entry_id: str):
                 "latitude": row[4],
                 "longitude": row[5],
                 "location_name": row[6],
-                "photos": []
+                "filename": row[7],
+                "original_name": row[8],
             }
-
-            # Get photos
-            async with db.execute(
-                "SELECT id, filename, original_name, order_index FROM photos WHERE entry_id = ? ORDER BY order_index",
-                (entry_id,)
-            ) as photo_cursor:
-                async for photo_row in photo_cursor:
-                    entry["photos"].append({
-                        "id": photo_row[0],
-                        "filename": photo_row[1],
-                        "original_name": photo_row[2],
-                        "order_index": photo_row[3]
-                    })
-
-    return entry
 
 @app.patch("/api/entries/{entry_id}")
 async def update_entry(
     entry_id: str,
     text: Optional[str] = Form(None),
-    remove_photos: Optional[str] = Form(None),  # Comma-separated photo IDs to remove
-    photos: List[UploadFile] = File(None),
+    photo: Optional[UploadFile] = File(None),
     authorization: Optional[str] = Header(None)
 ):
-    """Update a journal entry - change text, add/remove photos"""
+    """Update a journal entry - change text and/or replace photo"""
     verify_token(authorization)
 
     async with aiosqlite.connect(DATABASE_URL) as db:
         # Check entry exists
-        async with db.execute("SELECT id FROM entries WHERE id = ?", (entry_id,)) as cursor:
-            if not await cursor.fetchone():
+        async with db.execute("SELECT id, filename FROM entries WHERE id = ?", (entry_id,)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
                 raise HTTPException(status_code=404, detail="Entry not found")
+            old_filename = row[1]
 
         # Update text if provided
         if text is not None:
             await db.execute("UPDATE entries SET text = ? WHERE id = ?", (text, entry_id))
 
-        # Remove photos if specified
-        if remove_photos:
-            photo_ids = [p.strip() for p in remove_photos.split(",") if p.strip()]
-            for photo_id in photo_ids:
-                # Get filename to delete file
-                async with db.execute("SELECT filename FROM photos WHERE id = ? AND entry_id = ?", (photo_id, entry_id)) as cursor:
-                    row = await cursor.fetchone()
-                    if row:
-                        filepath = Path(UPLOAD_DIR) / row[0]
-                        if filepath.exists():
-                            filepath.unlink()
-                        await db.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
+        # Replace photo if provided
+        if photo and photo.filename:
+            if not photo.content_type or not photo.content_type.startswith("image/"):
+                raise HTTPException(status_code=400, detail="File is not an image")
 
-        # Get current photo count
-        async with db.execute("SELECT COUNT(*) FROM photos WHERE entry_id = ?", (entry_id,)) as cursor:
-            current_count = (await cursor.fetchone())[0]
+            # Delete old file
+            if old_filename:
+                old_path = Path(UPLOAD_DIR) / old_filename
+                if old_path.exists():
+                    old_path.unlink()
 
-        # Add new photos if provided
-        if photos and photos[0].filename:  # Check if actual files were uploaded
-            # Get max order_index
-            async with db.execute("SELECT MAX(order_index) FROM photos WHERE entry_id = ?", (entry_id,)) as cursor:
-                max_idx = (await cursor.fetchone())[0] or -1
+            # Save new file
+            ext = Path(photo.filename).suffix
+            new_id = str(uuid.uuid4())
+            new_filename = f"{new_id}{ext}"
+            filepath = Path(UPLOAD_DIR) / new_filename
 
-            new_count = len([p for p in photos if p.filename])
-            if current_count + new_count > 5:
-                raise HTTPException(status_code=400, detail=f"Maximum 5 photos per entry (currently {current_count})")
+            with open(filepath, "wb") as buffer:
+                shutil.copyfileobj(photo.file, buffer)
 
-            for idx, photo in enumerate(photos):
-                if not photo.filename:
-                    continue
-                if not photo.content_type or not photo.content_type.startswith("image/"):
-                    continue
-
-                ext = Path(photo.filename).suffix
-                photo_id = str(uuid.uuid4())
-                filename = f"{photo_id}{ext}"
-                filepath = Path(UPLOAD_DIR) / filename
-
-                with open(filepath, "wb") as buffer:
-                    shutil.copyfileobj(photo.file, buffer)
-
-                await db.execute(
-                    "INSERT INTO photos (id, entry_id, filename, original_name, order_index) VALUES (?, ?, ?, ?, ?)",
-                    (photo_id, entry_id, filename, photo.filename, max_idx + 1 + idx)
-                )
+            await db.execute(
+                "UPDATE entries SET filename = ?, original_name = ? WHERE id = ?",
+                (new_filename, photo.filename, entry_id)
+            )
 
         await db.commit()
 
@@ -349,25 +291,21 @@ async def update_entry(
 
 @app.delete("/api/entries/{entry_id}")
 async def delete_entry(entry_id: str, authorization: Optional[str] = Header(None)):
-    """Delete a journal entry and its photos"""
+    """Delete a journal entry and its photo"""
     verify_token(authorization)
 
     async with aiosqlite.connect(DATABASE_URL) as db:
-        # Get photos to delete files
-        async with db.execute(
-            "SELECT filename FROM photos WHERE entry_id = ?",
-            (entry_id,)
-        ) as cursor:
-            photos = await cursor.fetchall()
+        # Get filename to delete file
+        async with db.execute("SELECT filename FROM entries WHERE id = ?", (entry_id,)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Entry not found")
 
-        # Delete photo files
-        for photo in photos:
-            filepath = Path(UPLOAD_DIR) / photo[0]
-            if filepath.exists():
-                filepath.unlink()
+            if row[0]:
+                filepath = Path(UPLOAD_DIR) / row[0]
+                if filepath.exists():
+                    filepath.unlink()
 
-        # Delete from database
-        await db.execute("DELETE FROM photos WHERE entry_id = ?", (entry_id,))
         await db.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
         await db.commit()
 
