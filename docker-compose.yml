@@ -1,52 +1,56 @@
-version: '3.8'
-
 services:
   backend:
     build: ./backend
     container_name: japan-journal-backend
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # ports:
+    #   - "8000:8000"  # Uncomment for direct access
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
     environment:
       - DATABASE_URL=/app/data/journal.db
       - UPLOAD_DIR=/app/uploads
-    # Uncomment these labels when deploying with Traefik
-    # labels:
-    #   - "traefik.enable=true"
-    #   - "traefik.http.routers.japan-journal-api.rule=Host(`${DOMAIN:-japan.yourdomain.com}`) && PathPrefix(`/api`)"
-    #   - "traefik.http.routers.japan-journal-api.entrypoints=websecure"
-    #   - "traefik.http.routers.japan-journal-api.tls.certresolver=letsencrypt"
-    #   - "traefik.http.services.japan-journal-api.loadbalancer.server.port=8000"
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+    labels:
+      - "traefik.enable=true"
+      # HTTPS
+      - "traefik.http.routers.japan-journal-api.rule=Host(`japan.mambertibognolo.it`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.japan-journal-api.entrypoints=websecure"
+      - "traefik.http.routers.japan-journal-api.tls=true"
+      - "traefik.http.routers.japan-journal-api.tls.certresolver=myresolver"
+      - "traefik.http.services.japan-journal-api.loadbalancer.server.port=8000"
     networks:
-      - app
+      - homelab
 
   frontend:
     build: ./frontend
     container_name: japan-journal-frontend
     restart: unless-stopped
-    ports:
-      - "8010:80"
+    # ports:
+    #   - "8010:80"  # Uncomment for direct access
     depends_on:
       - backend
-    # Uncomment these labels when deploying with Traefik
-    # labels:
-    #   - "traefik.enable=true"
-    #   - "traefik.http.routers.japan-journal.rule=Host(`${DOMAIN:-japan.yourdomain.com}`)"
-    #   - "traefik.http.routers.japan-journal.entrypoints=websecure"
-    #   - "traefik.http.routers.japan-journal.tls.certresolver=letsencrypt"
-    #   - "traefik.http.services.japan-journal.loadbalancer.server.port=80"
+    labels:
+      - "traefik.enable=true"
+      # HTTPS
+      - "traefik.http.routers.japan-journal.rule=Host(`japan.mambertibognolo.it`)"
+      - "traefik.http.routers.japan-journal.entrypoints=websecure"
+      - "traefik.http.routers.japan-journal.tls=true"
+      - "traefik.http.routers.japan-journal.tls.certresolver=myresolver"
+      - "traefik.http.services.japan-journal.loadbalancer.server.port=80"
+      # HTTP redirect to HTTPS
+      - "traefik.http.routers.japan-journal-http.rule=Host(`japan.mambertibognolo.it`)"
+      - "traefik.http.routers.japan-journal-http.entrypoints=web"
+      - "traefik.http.routers.japan-journal-http.middlewares=japan-journal-redirect"
+      - "traefik.http.middlewares.japan-journal-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.japan-journal-redirect.redirectscheme.permanent=true"
     networks:
-      - app
+      - homelab
 
 networks:
-  # Uncomment when deploying with Traefik
-  # traefik:
-  #   external: true
-  app:
-    driver: bridge
+  homelab:
+    external: true
 
 volumes:
   data:
