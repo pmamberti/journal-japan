@@ -24,6 +24,8 @@ function App() {
   const [submitting, setSubmitting] = useState(false)
   const [compressing, setCompressing] = useState(false)
 
+  const touchStartX = useRef(null)
+
   // Edit state
   const [editingEntry, setEditingEntry] = useState(null)
   const [editText, setEditText] = useState('')
@@ -378,6 +380,26 @@ function App() {
   const closeLightbox = () => setLightbox(null)
   const lightboxPhoto = lightbox ? lightbox.photos[lightbox.index] : null
 
+  const lightboxNext = () => setLightbox(prev =>
+    prev ? { ...prev, index: (prev.index + 1) % prev.photos.length } : null
+  )
+  const lightboxPrev = () => setLightbox(prev =>
+    prev ? { ...prev, index: (prev.index - 1 + prev.photos.length) % prev.photos.length } : null
+  )
+
+  const handleTouchStart = (e) => {
+    touchStartX.current = e.touches[0].clientX
+  }
+
+  const handleTouchEnd = (e) => {
+    if (touchStartX.current === null) return
+    const delta = touchStartX.current - e.changedTouches[0].clientX
+    touchStartX.current = null
+    if (Math.abs(delta) < 50) return   // ignore small movements
+    if (delta > 0) lightboxNext()
+    else lightboxPrev()
+  }
+
   // Memoize object URLs to avoid recreating on every render (fixes slow typing)
   const previewUrls = useMemo(() => {
     return selectedPhotos.map(p => URL.createObjectURL(p.file))
@@ -578,7 +600,12 @@ function App() {
 
       {/* LIGHTBOX */}
       {lightbox && (
-        <div className="lightbox" onClick={closeLightbox}>
+        <div
+          className="lightbox"
+          onClick={closeLightbox}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
           <img
             src={`${API_URL}/photos/${lightboxPhoto.filename}`}
             alt=""
