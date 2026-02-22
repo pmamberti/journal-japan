@@ -4,6 +4,16 @@ import imageCompression from 'browser-image-compression'
 
 const API_URL = '/api'
 
+// Shuffle array using Fisher-Yates algorithm
+function shuffleArray(array) {
+  const shuffled = [...array]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+  return shuffled
+}
+
 function App() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -354,16 +364,6 @@ function App() {
   const formatDateLong = (dateString) => {
     const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }
     return new Date(dateString).toLocaleDateString('en-US', options)
-  }
-
-  // Shuffle array using Fisher-Yates algorithm
-  const shuffleArray = (array) => {
-    const shuffled = [...array]
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
-      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-    }
-    return shuffled
   }
 
   // In the new model, each entry IS a photo — no flattening needed
