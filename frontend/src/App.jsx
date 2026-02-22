@@ -9,7 +9,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
-  const [lightboxPhoto, setLightboxPhoto] = useState(null)
+  const [lightbox, setLightbox] = useState(null) // { photos: [], index: 0 } or null
   const [view, setView] = useState('manage') // 'manage' or 'gallery' (for logged in)
 
   // Auth state
@@ -374,6 +374,10 @@ function App() {
     return Math.ceil(Math.sqrt(count))
   }
 
+  const openLightbox = (photos, index) => setLightbox({ photos, index })
+  const closeLightbox = () => setLightbox(null)
+  const lightboxPhoto = lightbox ? lightbox.photos[lightbox.index] : null
+
   // Memoize object URLs to avoid recreating on every render (fixes slow typing)
   const previewUrls = useMemo(() => {
     return selectedPhotos.map(p => URL.createObjectURL(p.file))
@@ -487,7 +491,7 @@ function App() {
                             <img
                               src={`${API_URL}/photos/${entry.filename}`}
                               alt=""
-                              onClick={() => setLightboxPhoto(entry)}
+                              onClick={() => openLightbox([entry], 0)}
                             />
                           </div>
                         )}
@@ -521,7 +525,7 @@ function App() {
                   <img
                     src={`${API_URL}/photos/${entry.filename}`}
                     alt=""
-                    onClick={() => setLightboxPhoto(entry)}
+                    onClick={() => openLightbox(allPhotos, allPhotos.findIndex(e => e.id === entry.id))}
                   />
                   <div className="gallery-item-overlay">
                     <div className="gallery-item-date">{formatDate(entry.date)}</div>
@@ -552,7 +556,7 @@ function App() {
                   <img
                     src={`${API_URL}/photos/${entry.filename}`}
                     alt=""
-                    onClick={() => setLightboxPhoto(entry)}
+                    onClick={() => openLightbox(allPhotos, allPhotos.findIndex(e => e.id === entry.id))}
                   />
                   <div className="gallery-item-overlay">
                     <div className="gallery-item-date">{formatDate(entry.date)}</div>
@@ -573,9 +577,13 @@ function App() {
       )}
 
       {/* LIGHTBOX */}
-      {lightboxPhoto && (
-        <div className="lightbox" onClick={() => setLightboxPhoto(null)}>
-          <img src={`${API_URL}/photos/${lightboxPhoto.filename}`} alt="" />
+      {lightbox && (
+        <div className="lightbox" onClick={closeLightbox}>
+          <img
+            src={`${API_URL}/photos/${lightboxPhoto.filename}`}
+            alt=""
+            onClick={(e) => e.stopPropagation()}
+          />
           <div className="lightbox-info">
             <div className="lightbox-date">{formatDateLong(lightboxPhoto.date)}</div>
             {lightboxPhoto.location_name && (
