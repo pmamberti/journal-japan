@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import exifr from 'exifr'
 import imageCompression from 'browser-image-compression'
 
@@ -377,18 +377,18 @@ function App() {
   }
 
   const openLightbox = (photos, index) => setLightbox({ photos, index })
-  const closeLightbox = () => {
+  const closeLightbox = useCallback(() => {
     touchStartX.current = null
     setLightbox(null)
-  }
+  }, [])
   const lightboxPhoto = lightbox ? lightbox.photos[lightbox.index] : null
 
-  const lightboxNext = () => setLightbox(prev =>
+  const lightboxNext = useCallback(() => setLightbox(prev =>
     prev ? { ...prev, index: (prev.index + 1) % prev.photos.length } : null
-  )
-  const lightboxPrev = () => setLightbox(prev =>
+  ), [])
+  const lightboxPrev = useCallback(() => setLightbox(prev =>
     prev ? { ...prev, index: (prev.index - 1 + prev.photos.length) % prev.photos.length } : null
-  )
+  ), [])
 
   useEffect(() => {
     if (!lightbox) return
@@ -399,7 +399,7 @@ function App() {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [lightbox])
+  }, [lightbox, lightboxNext, lightboxPrev, closeLightbox])
 
   const handleTouchStart = (e) => {
     touchStartX.current = e.touches[0].clientX
