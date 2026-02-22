@@ -241,6 +241,7 @@ async def get_entry(entry_id: str):
 async def update_entry(
     entry_id: str,
     text: Optional[str] = Form(None),
+    location_name: Optional[str] = Form(None),
     photo: Optional[UploadFile] = File(None),
     authorization: Optional[str] = Header(None)
 ):
@@ -258,6 +259,9 @@ async def update_entry(
         # Update text if provided
         if text is not None:
             await db.execute("UPDATE entries SET text = ? WHERE id = ?", (text, entry_id))
+
+        if location_name is not None:
+            await db.execute("UPDATE entries SET location_name = ? WHERE id = ?", (location_name, entry_id))
 
         # Replace photo if provided
         if photo and photo.filename:
