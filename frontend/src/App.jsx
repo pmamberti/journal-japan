@@ -377,7 +377,10 @@ function App() {
   }
 
   const openLightbox = (photos, index) => setLightbox({ photos, index })
-  const closeLightbox = () => setLightbox(null)
+  const closeLightbox = () => {
+    touchStartX.current = null
+    setLightbox(null)
+  }
   const lightboxPhoto = lightbox ? lightbox.photos[lightbox.index] : null
 
   const lightboxNext = () => setLightbox(prev =>
@@ -386,6 +389,17 @@ function App() {
   const lightboxPrev = () => setLightbox(prev =>
     prev ? { ...prev, index: (prev.index - 1 + prev.photos.length) % prev.photos.length } : null
   )
+
+  useEffect(() => {
+    if (!lightbox) return
+    const handleKey = (e) => {
+      if (e.key === 'ArrowRight') lightboxNext()
+      else if (e.key === 'ArrowLeft') lightboxPrev()
+      else if (e.key === 'Escape') closeLightbox()
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [lightbox])
 
   const handleTouchStart = (e) => {
     touchStartX.current = e.touches[0].clientX
