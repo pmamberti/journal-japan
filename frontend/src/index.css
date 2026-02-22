@@ -897,3 +897,37 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   }
 }
+
+.sort-toggle-container {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.sort-toggle {
+  display: flex;
+  background: #e0e0e0;
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.sort-toggle button {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 6px;
+  font-weight: 500;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.sort-toggle button.active {
+  background: white;
+  color: var(--vermillion);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.sort-toggle button:hover:not(.active) {
+  color: #333;
+}

@@ -11,6 +11,7 @@ function App() {
   const [success, setSuccess] = useState(null)
   const [lightbox, setLightbox] = useState(null) // { photos: [], index: 0 } or null
   const [view, setView] = useState('manage') // 'manage' or 'gallery' (for logged in)
+  const [sortMode, setSortMode] = useState('random') // 'random' | 'date'
 
   // Auth state
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('authToken') || '')
@@ -367,8 +368,15 @@ function App() {
 
   // In the new model, each entry IS a photo — no flattening needed
   const allPhotos = useMemo(() => {
-    return shuffleArray(entries.filter(e => e.filename))
-  }, [entries])
+    const filtered = entries.filter(e => e.filename)
+    if (sortMode === 'date') {
+      return [...filtered].sort((a, b) => {
+        if (b.date !== a.date) return b.date.localeCompare(a.date)
+        return b.created_at.localeCompare(a.created_at)
+      })
+    }
+    return shuffleArray(filtered)
+  }, [entries, sortMode])
 
   // Calculate grid columns based on photo count
   const getGridCols = (count) => {
@@ -577,6 +585,23 @@ function App() {
         </>
       ) : (
         /* PUBLIC GALLERY */
+        <>
+        <div className="sort-toggle-container">
+          <div className="sort-toggle">
+            <button
+              className={sortMode === 'random' ? 'active' : ''}
+              onClick={() => setSortMode('random')}
+            >
+              Random
+            </button>
+            <button
+              className={sortMode === 'date' ? 'active' : ''}
+              onClick={() => setSortMode('date')}
+            >
+              Date
+            </button>
+          </div>
+        </div>
         <div
           className="gallery-mosaic"
           style={{ gridTemplateColumns: `repeat(${getGridCols(allPhotos.length + 1)}, 1fr)` }}
@@ -610,6 +635,7 @@ function App() {
             </>
           )}
         </div>
+        </>
       )}
 
       {/* LIGHTBOX */}
