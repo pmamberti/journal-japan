@@ -931,3 +931,49 @@ body {
 .sort-toggle button:hover:not(.active) {
   color: #333;
 }
+
+.location-input-wrapper {
+  position: relative;
+}
+
+.location-input-wrapper input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.location-searching {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.location-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #1a1a2e;
+  border: 1px solid #444;
+  border-radius: 8px;
+  list-style: none;
+  padding: 4px 0;
+  margin: 4px 0 0;
+  z-index: 100;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.location-suggestions li {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #ddd;
+}
+
+.location-suggestions li:hover {
+  background: rgba(255, 182, 193, 0.15);
+  color: #ffb6c1;
+}

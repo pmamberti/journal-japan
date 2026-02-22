@@ -42,6 +42,10 @@ function App() {
   const [editText, setEditText] = useState('')
   const [editNewPhoto, setEditNewPhoto] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [editLocationName, setEditLocationName] = useState('')
+  const [locationSuggestions, setLocationSuggestions] = useState([])
+  const [locationSearching, setLocationSearching] = useState(false)
+  const locationSearchTimer = useRef(null)
 
   useEffect(() => {
     fetchEntries()
@@ -136,6 +140,50 @@ function App() {
       // Ignore geocoding errors
     }
     return null
+  }
+
+  const searchLocationByName = async (query) => {
+    if (!query.trim() || query.length < 3) {
+      setLocationSuggestions([])
+      return
+    }
+    setLocationSearching(true)
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query + ', Japan')}&format=json&limit=5&addressdetails=1`,
+        { headers: { 'Accept-Language': 'en' } }
+      )
+      if (response.ok) {
+        const results = await response.json()
+        const names = results.map(r => {
+          const addr = r.address || {}
+          const parts = []
+          if (addr.amenity || addr.building || addr.tourism) {
+            parts.push(addr.amenity || addr.building || addr.tourism)
+          }
+          if (addr.road) parts.push(addr.road)
+          if (addr.neighbourhood || addr.suburb || addr.quarter) {
+            parts.push(addr.neighbourhood || addr.suburb || addr.quarter)
+          }
+          if (addr.city || addr.town || addr.village) {
+            parts.push(addr.city || addr.town || addr.village)
+          }
+          return parts.slice(0, 3).join(', ') || r.display_name?.split(',').slice(0, 3).join(',').trim()
+        }).filter(Boolean)
+        setLocationSuggestions(names)
+      }
+    } catch {
+      // ignore search errors
+    } finally {
+      setLocationSearching(false)
+    }
+  }
+
+  const handleLocationInput = (value) => {
+    setEditLocationName(value)
+    setLocationSuggestions([])
+    clearTimeout(locationSearchTimer.current)
+    locationSearchTimer.current = setTimeout(() => searchLocationByName(value), 500)
   }
 
   const handlePhotoChange = async (e) => {
@@ -304,6 +352,8 @@ function App() {
     setEditingEntry(entry)
     setEditText(entry.text || '')
     setEditNewPhoto(null)
+    setEditLocationName(entry.location_name || '')
+    setLocationSuggestions([])
   }
 
   const handleEditPhotoChange = async (e) => {
@@ -318,6 +368,7 @@ function App() {
     try {
       const formData = new FormData()
       formData.append('text', editText)
+      formData.append('location_name', editLocationName)
 
       // Compress and add replacement photo
       if (editNewPhoto) {
@@ -718,6 +769,35 @@ function App() {
                 onChange={(e) => setEditText(e.target.value)}
                 rows={4}
               />
+            </div>
+
+            <div className="edit-text">
+              <label>Location</label>
+              <div className="location-input-wrapper">
+                <input
+                  type="text"
+                  value={editLocationName}
+                  onChange={(e) => handleLocationInput(e.target.value)}
+                  onBlur={() => setTimeout(() => setLocationSuggestions([]), 150)}
+                  placeholder="Search for a place..."
+                />
+                {locationSearching && <span className="location-searching">searching...</span>}
+                {locationSuggestions.length > 0 && (
+                  <ul className="location-suggestions">
+                    {locationSuggestions.map((s, i) => (
+                      <li
+                        key={i}
+                        onMouseDown={() => {
+                          setEditLocationName(s)
+                          setLocationSuggestions([])
+                        }}
+                      >
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
 
             <div className="edit-actions">
