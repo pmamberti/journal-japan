@@ -150,7 +150,7 @@ function App() {
     setLocationSearching(true)
     try {
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query + ', Japan')}&format=json&limit=5&addressdetails=1`,
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&countrycodes=jp&format=json&limit=5&addressdetails=1`,
         { headers: { 'Accept-Language': 'en' } }
       )
       if (response.ok) {
@@ -170,7 +170,7 @@ function App() {
           }
           return parts.slice(0, 3).join(', ') || r.display_name?.split(',').slice(0, 3).join(',').trim()
         }).filter(Boolean)
-        setLocationSuggestions(names)
+        setLocationSuggestions([...new Set(names)])
       }
     } catch {
       // ignore search errors
@@ -459,6 +459,10 @@ function App() {
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
   }, [lightbox, lightboxNext, lightboxPrev, closeLightbox])
+
+  useEffect(() => {
+    if (!editingEntry) clearTimeout(locationSearchTimer.current)
+  }, [editingEntry])
 
   const handleTouchStart = (e) => {
     touchStartX.current = e.touches[0].clientX
@@ -784,9 +788,9 @@ function App() {
                 {locationSearching && <span className="location-searching">searching...</span>}
                 {locationSuggestions.length > 0 && (
                   <ul className="location-suggestions">
-                    {locationSuggestions.map((s, i) => (
+                    {locationSuggestions.map((s) => (
                       <li
-                        key={i}
+                        key={s}
                         onMouseDown={() => {
                           setEditLocationName(s)
                           setLocationSuggestions([])
