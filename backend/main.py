@@ -245,7 +245,7 @@ async def update_entry(
     photo: Optional[UploadFile] = File(None),
     authorization: Optional[str] = Header(None)
 ):
-    """Update a journal entry - change text and/or replace photo"""
+    """Update a journal entry - change text, location_name and/or replace photo"""
     verify_token(authorization)
 
     async with aiosqlite.connect(DATABASE_URL) as db:
@@ -260,6 +260,7 @@ async def update_entry(
         if text is not None:
             await db.execute("UPDATE entries SET text = ? WHERE id = ?", (text, entry_id))
 
+        # Update location_name if provided
         if location_name is not None:
             await db.execute("UPDATE entries SET location_name = ? WHERE id = ?", (location_name, entry_id))
 
