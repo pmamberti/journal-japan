@@ -18,6 +18,7 @@ build/
 # Application data
 data/
 uploads/
+ideas.md
 *.db
 *.sqlite
 *.sqlite3

@@ -14,12 +14,12 @@ import json
 app = FastAPI(title="Japan Journal API")
 
 # Auth configuration
-AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN")
+if not AUTH_TOKEN:
+    raise RuntimeError("AUTH_TOKEN is required")
 
 def verify_token(authorization: Optional[str] = Header(None)):
     """Verify the auth token for protected routes"""
-    if not AUTH_TOKEN:
-        return  # No auth configured, allow all
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header required")
     # Accept "Bearer <token>" or just "<token>"

@@ -1,255 +1,98 @@
 # Japan Journal
 
-A simple, self-hosted photo journal app for documenting your daily adventures during a trip to Japan. Post 1-5 photos per day with text descriptions.
+A small self-hosted photo journal with a React/Vite frontend, FastAPI backend,
+SQLite metadata, and local JPEG storage.
 
-## Features
+## Production shape
 
-- Post 1-5 photos daily with text descriptions
-- Responsive design optimized for mobile (iPhone)
-- PWA support - add to home screen for app-like experience
-- Gallery view of all entries
-- Lightbox for viewing full-size images
-- Date-based organization
-- SQLite database for simplicity
-- Docker-based deployment
-- Traefik integration for reverse proxy and SSL
+- Docker Compose builds one backend and one Nginx frontend image.
+- Neither service publishes a host port. Both join the external `homelab`
+  network and are routed by Traefik.
+- The frontend and API use the same hostname; `/api` is routed to FastAPI.
+- Cloudflare Access may provide an outer login boundary, but application writes
+  also require `AUTH_TOKEN`.
+- `AUTH_TOKEN` is mandatory. Compose and the backend both fail closed when it
+  is missing; never commit the runtime `.env`.
+- Both services have healthchecks, and the frontend waits for a healthy
+  backend.
 
-## Tech Stack
+## Build and deployment
 
-- **Frontend**: React + Vite, served by Nginx
-- **Backend**: Python FastAPI
-- **Database**: SQLite
-- **Storage**: Local file system
-- **Deployment**: Docker Compose + Traefik
+The Python transitive package set, frontend package graph, and build-image
+digests are locked. Update those inputs deliberately rather than replacing the
+lockfiles during routine deployment.
 
-## Quick Start (Local Development)
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Node.js (for local frontend development)
-- Python 3.11+ (for local backend development)
-
-### Running Locally Without Docker
-
-**Backend:**
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload
-```
-
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-The app will be available at `http://localhost:5173`
-
-### Running With Docker (No Traefik)
-
-For quick local testing with Docker:
-
-```bash
-# Start the application
-docker compose up -d --build
-
-# View logs
-docker compose logs -f
-
-# Stop the application
-docker compose down
-```
-
-The app will be available at `http://localhost:8010`
-
-**Note:** The default docker-compose.yml has Traefik labels commented out for easy local testing. When deploying to your home lab with Traefik, uncomment the labels in docker-compose.yml and add the containers to the traefik network.
-
-## Production Deployment (Home Lab with Traefik)
-
-### Prerequisites
-
-- Docker and Docker Compose installed on your home lab server
-- Traefik reverse proxy already set up and running
-- A domain name pointing to your home lab (or local DNS entry)
-
-### Setup Steps
-
-1. Clone this repository to your server:
-```bash
-git clone <your-repo-url>
-cd journal-japan
-```
-
-2. Create a `.env` file with your domain:
 ```bash
 cp .env.example .env
-# Edit .env and set your domain
-DOMAIN=japan.yourdomain.com
+# Put a strong AUTH_TOKEN in .env and keep the file mode 0600.
+chmod 0600 .env
+
+docker compose config --quiet
+docker compose build
+docker compose up -d
+docker compose ps
 ```
 
-3. Uncomment the Traefik labels in `docker-compose.yml`:
-   - Uncomment all the `labels:` sections for both backend and frontend
-   - Uncomment the `traefik:` network under `networks:`
-   - Add `- traefik` to the networks list for both services
-
-4. Make sure your Traefik network exists:
-```bash
-docker network create traefik
-```
-
-5. Build and start the containers:
-```bash
-docker compose up -d --build
-```
-
-6. Check logs to ensure everything started correctly:
-```bash
-docker-compose logs -f
-```
-
-### Traefik Configuration
-
-The app is pre-configured with Traefik labels in `docker-compose.yml`:
-
-- Frontend: `https://japan.yourdomain.com`
-- Backend API: `https://japan.yourdomain.com/api`
-
-Make sure your Traefik configuration includes:
-- A `websecure` entrypoint on port 443
-- A certificate resolver named `letsencrypt`
-
-Example Traefik static configuration:
-```yaml
-entryPoints:
-  websecure:
-    address: ":443"
-
-certificatesResolvers:
-  letsencrypt:
-    acme:
-      email: your-email@example.com
-      storage: /letsencrypt/acme.json
-      httpChallenge:
-        entryPoint: web
-```
-
-### Using on Your iPhone
-
-1. Open Safari and navigate to your domain (e.g., `https://japan.yourdomain.com`)
-2. Tap the Share button (square with arrow)
-3. Scroll down and tap "Add to Home Screen"
-4. Name it "Japan Journal" and tap "Add"
-5. The app will now appear on your home screen like a native app!
-
-The PWA configuration ensures:
-- Full-screen mode (no browser UI)
-- Custom app icon
-- Offline capability for viewing existing entries
-- Native-like experience
-
-## Usage
-
-### Adding an Entry
-
-1. Select today's date (or any past date)
-2. Write about your day in the text area
-3. Click the photo upload area and select 1-5 photos
-4. Click "Post Entry"
-
-### Viewing Entries
-
-- All entries appear in the gallery below the form
-- Click any photo to view it full-size
-- Entries are sorted by date (newest first)
-
-### Deleting an Entry
-
-- Click the "Delete Entry" button at the bottom of any entry card
-- Confirm the deletion
-
-## File Structure
-
-```
-.
-├── backend/
-│   ├── Dockerfile
-│   ├── main.py           # FastAPI application
-│   └── requirements.txt
-├── frontend/
-│   ├── Dockerfile
-│   ├── nginx.conf        # Nginx configuration
-│   ├── package.json
-│   ├── public/
-│   │   └── manifest.json # PWA manifest
-│   └── src/
-│       ├── App.jsx       # Main React component
-│       ├── index.css     # Styles
-│       └── main.jsx      # React entry point
-├── docker-compose.yml
-├── .env.example
-└── README.md
-```
-
-## Data Persistence
-
-All data is stored in local volumes:
-- `./data/` - SQLite database
-- `./uploads/` - Photo files
-
-These directories are created automatically and are git-ignored. Make sure to back them up!
-
-## Backup
-
-To backup your journal:
+The external network must already exist:
 
 ```bash
-# Backup database and photos
-tar -czf japan-journal-backup-$(date +%Y%m%d).tar.gz data/ uploads/
-
-# Or use rsync for incremental backups
-rsync -av --progress data/ uploads/ /path/to/backup/location/
+docker network inspect homelab >/dev/null
 ```
 
-## Updating
+For local frontend development, use `npm ci`, not `npm install`. For local
+backend development, install `backend/requirements.lock` to reproduce the
+deployed package set.
 
-To update the application:
+## Data and recovery
+
+Irreplaceable state lives in:
+
+- `data/journal.db` — SQLite entries and upload references;
+- `uploads/` — the referenced JPEGs.
+
+Those paths and `.env` are ignored by Git. Take an SQLite online backup while
+the service is live, then copy exactly the upload filenames referenced by that
+staged database. Do not archive a potentially changing live SQLite file with a
+plain `tar` command.
+
+The reviewed homelab deployment adds the private note, integrity manifests,
+encrypted off-host backup, and isolated restore proof outside this public
+repository. Logs, caches, build output, Git objects, and unreferenced files are
+not recovery state.
+
+## API security
+
+Read endpoints are public inside the application boundary. Creating, editing,
+deleting, and verifying write access require the operator token. The browser
+stores that token locally after the operator enters it. Treat browser storage
+and the runtime `.env` as secret-bearing.
+
+Uploaded content is checked as an image by the application, but this is a
+personal service rather than a hardened multi-tenant upload platform. Keep it
+behind the intended reverse-proxy/access boundary.
+
+## Layout
+
+```text
+backend/                 FastAPI source, locked packages, pinned image
+frontend/                React/Vite source, npm lockfile, pinned build images
+data/                    runtime SQLite state (ignored)
+uploads/                 runtime JPEG state (ignored)
+docker-compose.yml       production Compose definition
+.env.example             non-secret runtime shape
+```
+
+## Operations
 
 ```bash
-git pull
-docker-compose down
-docker-compose up -d --build
+docker compose ps
+docker compose logs --tail 100 backend frontend
 ```
 
-## Troubleshooting
-
-### Can't connect to the app
-- Check that Traefik is running: `docker ps | grep traefik`
-- Verify the domain is correct in `.env`
-- Check container logs: `docker-compose logs`
-
-### Photos not uploading
-- Check backend logs: `docker-compose logs backend`
-- Verify the uploads directory has correct permissions
-- Ensure you're selecting 1-5 images
-
-### Database errors
-- Check that the data directory is writable
-- View backend logs for specific error messages
-
-## Security Notes
-
-- This app is designed for personal use behind Traefik
-- No authentication is built in - protect with Traefik BasicAuth or similar
-- Consider adding CORS restrictions in production
-- The app trusts all uploaded files are images - add validation as needed
+Before an update, verify a current recovery core and review the image/source
+diff. Rebuild first, then recreate only this stack and confirm both containers
+are healthy with zero restarts.
 
 ## License
 
 MIT
-
-## Enjoy Your Trip!
-
-Have an amazing time in Japan! 🇯🇵 🗾 ⛩️
